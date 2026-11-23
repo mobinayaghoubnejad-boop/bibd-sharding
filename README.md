@@ -12,9 +12,12 @@ Simulator and experiment scripts for the manuscript *"BIBD-Constrained Account P
 | `metrics.py` | Cross-shard ratio ρ_cross, load imbalance CV_L, migration, statistics (Welch t-test, Cohen's d, 95% CI, Holm correction) | 5.4, 5.6 |
 | `experiments.py` | Main comparison, ablation, 100,000-account scale run, figures | 6.1–6.5 |
 | `ethereum_full.py` | Full Ethereum protocol (S = 13 and 31, 15 runs, including ablation) | 6.6 |
-| `hybrid.py` | Multi-epoch experiment: Louvain at epoch 0, BIBD-constrained warm-started updates at epochs 1–5 | 5.2, 6.8, Table 10 |
-| `fig7.py` | Plots Fig. 7 from the output of `hybrid.py` | 6.8, Fig. 7 |
-| `results/hybrid_*_raw.csv` | Raw results of the hybrid experiment (every method, run and epoch) | 6.8 |
+| `hybrid.py` | Multi-epoch experiment: Louvain or TxAllo at epoch 0, BIBD-constrained warm-started updates at epochs 1–5 | 5.2, 6.9, Table 11 |
+| `txallo.py` | Re-implementation of TxAllo (Zhang et al., ICDE 2023): G-TxAllo, A-TxAllo and the capacity-constrained variants | 5.3 |
+| `txallo_runs.py` | TxAllo under the two-epoch protocol (synthetic, 100,000 accounts, Ethereum) | 6.7, Table 9 |
+| `fig7.py` | Plots Fig. 7 from the output of `hybrid.py` | 6.9, Fig. 7 |
+| `results/hybrid_*_raw.csv` | Raw results of the multi-epoch experiment (every method, run and epoch) | 6.9, Table 11 |
+| `results/txallo_*_raw.csv` | Raw results of TxAllo under the two-epoch protocol | 6.7, Table 9 |
 | `job_h40qzHAg_I74wwDbxiDffPbBuROA (1).csv` | Ethereum mainnet trace used in the paper (blocks 18,000,000–18,000,250) | 5.1, 6.6 |
 
 ## Requirements
@@ -69,7 +72,25 @@ Reported metrics: `rho_cross`, `CV_L`, `migration`, `time_ms`, `memory_KB`, `obj
 
 Transactions are sorted by time. The first 70% form the training window and the last 30% the test window, on which ρ_cross and CV_L are measured. The partition is built in two epochs (epoch 1 on the first half of the training window, epoch 2 on the whole training window), so that migration can be measured.
 
-## Hybrid Louvain + BIBD experiment (Section 6.8)
+## TxAllo baseline (Sections 5.3 and 6.7)
+
+TxAllo has no public code; `txallo.py` follows Section V of Zhang, Pan and Yu, "TxAllo: Dynamic Transaction Allocation in Sharded Blockchain Systems", ICDE 2023 (arXiv:2212.11584), with the parameters of its case study (η = 2, λ = |T|/k, ε = 1e-5·|T|).
+
+| Method | Description |
+|---|---|
+| `G-TxAllo` | global algorithm: Louvain communities, keep the k heaviest, place the rest by throughput gain, then move accounts while the gain is positive |
+| `A-TxAllo` | adaptive algorithm: start from the previous allocation and move only the accounts of the new transactions |
+| `G-TxAllo-C`, `A-TxAllo-C` | same, with the account capacity ceil((1+ε)N/S) of Eq. (2): Louvain communities packed under capacity, no moves into full shards |
+
+```
+python txallo_runs.py main                     # 4 scales x {structured, random} x 15 seeds
+python txallo_runs.py scale                    # 100,000 accounts, 3 seeds
+python txallo_runs.py ethereum --csv eth.csv   # S = 13 and 31, 15 seeds
+```
+
+Outputs `results/txallo_{main,scale,ethereum}_raw.csv`, with the extra columns `max_load_ratio` (largest shard size / capacity) and `empty_shards`.
+
+## Multi-epoch experiment with hybrids (Section 6.9)
 
 The transaction stream is cut into seven consecutive, non-overlapping windows W0, …, W6. The partition of epoch e is built on We and evaluated on W(e+1); migration at epoch e is measured against epoch e − 1.
 
@@ -80,6 +101,8 @@ The transaction stream is cut into seven consecutive, non-overlapping windows W0
 | `Hash` | static |
 | `BIBD` | proposed method: LDG grouping at epoch 0, warm start afterwards |
 | `Hybrid` | Louvain at epoch 0; groups set to φ(a) = (σ_L(a) + d0) mod v, so the Louvain partition lies in the BIBD candidate space without moving any account; BIBD-constrained warm-started local search at epochs 1–5 |
+| `TxAllo`, `TxAllo-C` | G-TxAllo at epoch 0, A-TxAllo at epochs 1–5 (as published, and with the capacity constraint) |
+| `Hybrid-TxAllo` | G-TxAllo-C at epoch 0, mapped into the candidate space as above; BIBD-constrained updates at epochs 1–5 |
 
 ```
 python hybrid.py synthetic --seeds 15                 # N = 186 and 310, S = 31, 10N transactions per window
@@ -88,7 +111,7 @@ python hybrid.py ethereum --csv eth.csv --seeds 15    # Ethereum trace, S = 13 a
 python fig7.py                                        # writes results/fig7_hybrid.png
 ```
 
-Outputs: `results/hybrid_synthetic_raw.csv`, `results/hybrid_scale_raw.csv` and `results/hybrid_ethereum_raw.csv`. Each row is one method, run and epoch, with columns `rho_cross`, `CV_L`, `migration` and `time_s`. Table 10 reports the mean over epochs 1–5.
+Outputs: `results/hybrid_synthetic_raw.csv`, `results/hybrid_scale_raw.csv` and `results/hybrid_ethereum_raw.csv`. Each row is one method, run and epoch, with columns `rho_cross`, `CV_L`, `migration` and `time_s`. Table 11 reports the mean over epochs 1–5.
 
 ## Ethereum data
 

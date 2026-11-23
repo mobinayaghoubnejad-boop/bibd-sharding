@@ -29,6 +29,8 @@ from designs import CyclicBIBD
 from workload import structured_workload, load_ethereum_csv, build_graph
 from partition import bibd_method, hash_partition, ldg, louvain_partition
 from metrics import rho_cross, cv_load, align_labels, migration
+from txallo import g_txallo, g_txallo_c, a_txallo
+from partition import capacity
 
 EPS = 0.05
 BUDGET_PASSES = 10
@@ -104,6 +106,42 @@ def run_stream(wins, N, S, seed, tag):
         dt = time.perf_counter() - t0
         record("Hybrid", e, sig, prev, dt)
         prev = sig
+
+    # --- TxAllo (ICDE'23): G-TxAllo at epoch 0, A-TxAllo at epochs 1..E-1 (as published,
+    #     and adapted to the account-capacity constraint), plus a hybrid that starts from
+    #     the constrained G-TxAllo and continues with BIBD-constrained updates.
+    cap = capacity(N, S, EPS)
+    for name, G, c in (("TxAllo", lambda a: g_txallo(a, N, S, seed=seed), None),
+                       ("TxAllo-C", lambda a: g_txallo_c(a, N, S, seed=seed), cap)):
+        seen = np.zeros(N, dtype=bool)
+        t0 = time.perf_counter()
+        sig, _ = G(adjs[0])
+        dt = time.perf_counter() - t0
+        if c is not None:
+            txc0 = (sig.copy(), dt)
+        record(name, 0, sig, None, dt)
+        seen |= np.array([bool(nb) for nb in adjs[0]])
+        prev = sig
+        for e in range(1, EPOCHS):
+            vhat = [v for v in range(N) if adjs[e][v]]
+            t0 = time.perf_counter()
+            sig, _ = a_txallo(adjs[e], N, S, prev, vhat, seen, cap=c)
+            dt = time.perf_counter() - t0
+            record(name, e, sig, prev, dt)
+            seen |= np.array([bool(nb) for nb in adjs[e]])
+            prev = sig
+
+    rng = np.random.default_rng(seed)
+    sig, dt = txc0
+    phi = (sig + d0) % design.v
+    record("Hybrid-TxAllo", 0, sig, None, dt)
+    prev = sig
+    for e in range(1, EPOCHS):
+        t0 = time.perf_counter()
+        sig, info = bibd_method(adjs[e], N, S, design, budget, EPS, rng=rng, warm_start=(prev, phi))
+        dt = time.perf_counter() - t0
+        record("Hybrid-TxAllo", e, sig, prev, dt)
+        prev = sig
     return rows
 
 
@@ -133,6 +171,7 @@ if __name__ == "__main__":
     p.add_argument("mode", choices=["synthetic", "ethereum", "scale"])
     p.add_argument("--csv")
     p.add_argument("--seeds", type=int, default=15)
+    p.add_argument("--prefix", default="hybrid")
     a = p.parse_args()
     os.makedirs(OUT, exist_ok=True)
     if a.mode == "synthetic":
@@ -141,5 +180,5 @@ if __name__ == "__main__":
         rows = synthetic(a.seeds, [(100_000, 31)], 5)
     else:
         rows = ethereum(a.csv, a.seeds)
-    pd.DataFrame(rows).to_csv(f"{OUT}/hybrid_{a.mode}_raw.csv", index=False)
+    pd.DataFrame(rows).to_csv(f"{OUT}/{a.prefix}_{a.mode}_raw.csv", index=False)
     print("FINISHED")
